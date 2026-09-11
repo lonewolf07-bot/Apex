@@ -5,6 +5,11 @@ const path = require('path');
 const express = require('express');
 const db = require('./db.js');
 
+// Global Unhandled Rejection Logger
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[APEX] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
 // 0. Keep-alive Web Server for Render
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -30,7 +35,11 @@ const client = new Client({
 client.commands = new Collection();
 client.aliases = new Collection();
 
-// 1. Load Commands
+// Diagnostic Client Handlers
+client.on('error', error => console.error('[APEX] Discord Client Error:', error));
+client.on('warn', warning => console.warn('[APEX] Discord Client Warning:', warning));
+
+// 1. Load Commands (Supports both array exports and single object exports)
 const commandsPath = path.join(__dirname, 'commands');
 if (fs.existsSync(commandsPath)) {
   const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
@@ -44,11 +53,14 @@ if (fs.existsSync(commandsPath)) {
         if (cmd.data && cmd.data.name) {
           client.commands.set(cmd.data.name, cmd);
           if (cmd.aliases && Array.isArray(cmd.aliases)) {
-            for (const alias of cmd.aliases) {
-              client.aliases.set(alias, cmd.data.name);
-            }
+            for (const alias of cmd.aliases) client.aliases.set(alias, cmd.data.name);
           }
         }
+      }
+    } else if (commandModule.data && commandModule.data.name) {
+      client.commands.set(commandModule.data.name, commandModule);
+      if (commandModule.aliases && Array.isArray(commandModule.aliases)) {
+        for (const alias of commandModule.aliases) client.aliases.set(alias, commandModule.data.name);
       }
     }
   }
@@ -81,10 +93,9 @@ async function processXpGain(member, amount, channel) {
   const { leveledUp, newLevel } = db.addXp(member.id, finalXp);
 
   if (leveledUp) {
-    // Reward Math: Base reward + Massive Level 10 Margin Boost
     let cashReward = newLevel * 150;
     if (newLevel % 10 === 0) {
-      cashReward += newLevel * 2000; // Big bonus every 10 levels
+      cashReward += newLevel * 2000;
     }
 
     db.updateWallet(member.id, cashReward);
@@ -108,7 +119,7 @@ async function processXpGain(member, amount, channel) {
   }
 }
 
-// 3. Client Ready Event (Fixed event listener name)
+// 3. Client Ready Event
 client.once(Events.ClientReady, async (c) => {
   console.log(`[APEX v4.0] Logged in as ${c.user.tag}`);
 
@@ -122,12 +133,14 @@ client.once(Events.ClientReady, async (c) => {
     }
   }
 
-  const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
-  try {
-    await rest.put(Routes.applicationCommands(c.user.id), { body: commandsToRegister });
-    console.log('[APEX] Reloaded application (/) commands.');
-  } catch (err) {
-    console.error('[APEX] Slash command registration error:', err);
+  if (commandsToRegister.length > 0) {
+    const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
+    try {
+      await rest.put(Routes.applicationCommands(c.user.id), { body: commandsToRegister });
+      console.log(`[APEX] Successfully reloaded ${commandsToRegister.length} (/) commands.`);
+    } catch (err) {
+      console.error('[APEX] Slash command registration error:', err);
+    }
   }
 
   // VC XP Timer (Gives XP every 60s to active voice members)
@@ -202,7 +215,7 @@ client.on(Events.MessageCreate, async (message) => {
   // Text XP Processing (1 min cooldown per user)
   const userLvl = db.getUserLevel(message.author.id);
   if (Date.now() - userLvl.last_xp_time > 60000) {
-    const xpEarned = Math.floor(Math.random() * 11) + 15; // 15-25 XP
+    const xpEarned = Math.floor(Math.random() * 11) + 15;
     await processXpGain(message.member, xpEarned, message.channel);
   }
 
@@ -242,6 +255,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
-client.login(process.env.TOKEN).catch((err) => {
-  console.error('[APEX] Login failed:', err);
-});
+// 6. Login Validation
+if (!process.env.TOKEN) {
+  console.error('[APEX FATAL] process.env.TOKEN is undefined. Set "TOKEN" in Render Environment tab!');
+} else {
+  console.log('[APEX] Connecting to Discord Gateway...');
+  client.login(process.env.TOKEN).catch((err) => {
+    console.error('[APEX] Login failed with error:', err);
+  });
+}
