@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Collection, REST, Routes, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, Collection, REST, Routes, EmbedBuilder, Events } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const express = require('express');
@@ -108,9 +108,9 @@ async function processXpGain(member, amount, channel) {
   }
 }
 
-// 3. Client Ready & Top Role Auto-Assignment Loop
-client.once('clientReady', async () => {
-  console.log(`[APEX v4.0] Logged in as ${client.user.tag}`);
+// 3. Client Ready Event (Fixed event listener name)
+client.once(Events.ClientReady, async (c) => {
+  console.log(`[APEX v4.0] Logged in as ${c.user.tag}`);
 
   // Register Slash Commands
   const commandsToRegister = [];
@@ -124,10 +124,10 @@ client.once('clientReady', async () => {
 
   const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
   try {
-    await rest.put(Routes.applicationCommands(client.user.id), { body: commandsToRegister });
+    await rest.put(Routes.applicationCommands(c.user.id), { body: commandsToRegister });
     console.log('[APEX] Reloaded application (/) commands.');
   } catch (err) {
-    console.error(err);
+    console.error('[APEX] Slash command registration error:', err);
   }
 
   // VC XP Timer (Gives XP every 60s to active voice members)
@@ -176,7 +176,7 @@ client.once('clientReady', async () => {
 });
 
 // 4. Text Message Event
-client.on('messageCreate', async (message) => {
+client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot || !message.guild) return;
 
   // AFK check & return logic
@@ -226,7 +226,7 @@ client.on('messageCreate', async (message) => {
 });
 
 // 5. Slash Command Handler
-client.on('interactionCreate', async (interaction) => {
+client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
   const command = client.commands.get(interaction.commandName);
@@ -242,4 +242,6 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
-client.login(process.env.TOKEN);
+client.login(process.env.TOKEN).catch((err) => {
+  console.error('[APEX] Login failed:', err);
+});
